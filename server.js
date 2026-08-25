@@ -22,23 +22,23 @@ app.post('/process-movie', async (req, res) => {
   console.log(`[Worker] Нова задача отримана для: "${title}"`);
 
   try {
-    // 1. Переклад назви
+    // 1. Адаптація/переклад назви українською мовою через GPT-4o
     const ukrainianTitle = await getUkrainianTitle(title);
 
-    // 2. Пошук та завантаження аудіо
+    // 2. Пошук фільму на uakino та завантаження аудіо
     const audioPath = await downloadStream(ukrainianTitle);
 
-    // 3. Аналіз Whisper + GPT-4o
+    // 3. Аналіз аудіо (Whisper -> GPT-4o для вибору моменту)
     const transcription = await transcribeAudio(audioPath);
     const segment = await findBestClipSegment(transcription);
 
-    // 4. Нарізка відео через FFmpeg
+    // 4. Нарізка обраного 20-секундного фрагменту через FFmpeg
     const clipPath = await cutVideoSegment(segment.start, segment.end);
 
-    // 5. Завантаження у Cloudflare R2
+    // 5. Завантаження відеокліпу у Cloudflare R2
     const clipUrl = await uploadClipToS3(clipPath, `clip-${Date.now()}.mp4`);
 
-    // Повертаємо готову відповідь для n8n
+    // Відповідь для n8n з готовим посиланням
     res.json({
       success: true,
       originalTitle: title,
