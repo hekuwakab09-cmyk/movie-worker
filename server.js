@@ -1,61 +1,76 @@
 import express from 'express';
-import { config } from './config.js';
-import { getUkrainianTitle, transcribeAudio, findBestClipSegment } from './services/ai.js';
+// Переконайтеся, що в файлі ./services/stream.js ці функції дійсно мають `export function ...`
 import { downloadStream, cutVideoSegment } from './services/stream.js';
-import { uploadClipToS3 } from './services/storage.js';
+// Переконайтеся, що у вас є сервіс для пошуку (назва та шлях можуть відрізнятися у вашому проекті)
+import { searchUakino } from './services/search.js'; 
 
 const app = express();
+const PORT = process.env.PORT || 10000;
+
+// Мідлвар для читання JSON від n8n
 app.use(express.json());
 
+// Перевірка працездатності сервера (Health Check)
 app.get('/', (req, res) => {
-  res.send('Movie Worker is running!');
+  res.send({ status: 'active', message: 'Worker is running!' });
 });
 
-app.post('/process-movie', async (req, res) => {
-  const { title } = req.body;
-
-  if (!title) {
-    return res.status(400).json({ error: 'Потрібно вказати параметр "title"' });
-  }
-
-  console.log(`\n===========================================`);
-  console.log(`[Worker] Нова задача отримана для: "${title}"`);
-
+// Ендпоінт для обробки назви та пошуку посилання
+app.post('/process-title', async (req, res) => {
   try {
-    // 1. Адаптація/переклад назви українською мовою через GPT-4o
-    const ukrainianTitle = await getUkrainianTitle(title);
+    const { title, originalTitle } = req.body;
 
-    // 2. Пошук фільму на uakino та завантаження аудіо
-    const audioPath = await downloadStream(ukrainianTitle);
+    if (!title && !originalTitle) {
+      return res.status(400).json({
+        success: false,
+        message: 'Потрібно передати title або originalTitle'
+      });
+    }
 
-    // 3. Аналіз аудіо (Whisper -> GPT-4o для вибору моменту)
-    const transcription = await transcribeAudio(audioPath);
-    const segment = await findBestClipSegment(transcription);
+    const query = title || originalTitle;
+    
+    // Виклик вашої функції пошуку посилання на uakino
+    const searchResult = await searchUakino(query);
 
-    // 4. Нарізка обраного 20-секундного фрагменту через FFmpeg
-    const clipPath = await cutVideoSegment(segment.start, segment.end);
-
-    // 5. Завантаження відеокліпу у Cloudflare R2
-    const clipUrl = await uploadClipToS3(clipPath, `clip-${Date.now()}.mp4`);
-
-    // Відповідь для n8n з готовим посиланням
-    res.json({
+    return res.json({
       success: true,
-      originalTitle: title,
-      processedTitle: ukrainianTitle,
-      clipUrl: clipUrl,
-      segment: segment
+      originalTitle: originalTitle || title,
+      processedTitle: title,
+      link: searchResult?.link || null, // Передаємо знайдене посилання
+      message: searchResult?.link 
+        ? 'Успішно знайдено посилання на uakino' 
+        : 'Назву опрацьовано, але посилання на uakino не знайдено'
     });
 
   } catch (error) {
-    console.error('[Worker Error] Помилка виконання:', error.message);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message 
+    console.error('Помилка при обробці запиту:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Внутрішня помилка сервера',
+      error: error.message
     });
   }
 });
 
-app.listen(config.port, () => {
-  console.log(`Worker running on port ${config.port}`);
+// Ендпоінт для нарізки/завантаження відео (за потреби)
+app.post('/process-video', async (req, res) => {
+  try {
+    const { videoUrl, startTime, duration } = req.body;
+
+    // Приклад використання cutVideoSegment
+    const result = await cutVideoSegment(videoUrl, startTime, duration);
+
+    return res.json({
+      success: true,
+      result
+    });
+  } catch (error) {
+    console.error('Помилка обробки відео:', error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Запуск сервера
+app.listen(PORT, () => {
+  console.log(`Worker running on port ${PORT}`);
 });
