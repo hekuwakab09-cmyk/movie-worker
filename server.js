@@ -1,6 +1,6 @@
 import express from 'express';
 // Імпортуємо тільки ті файли, які дійсно є в папці services/
-import { downloadStream, cutVideoSegment } from './services/stream.js';
+import { getStreamUrl, extractVideoClip } from './services/stream.js';
 // Якщо логіка AI/пошуку у вас в ai.js, імпортуйте її звідси:
 // import { processTitleWithAI } from './services/ai.js'; 
 
@@ -34,9 +34,13 @@ app.post('/process-title', async (req, res) => {
 app.post('/process-video', async (req, res) => {
   try {
     const { videoUrl, startTime, duration } = req.body;
-    
-    // Приклад використання функції зі stream.js
-    const result = await cutVideoSegment(videoUrl, startTime, duration);
+
+    // Отримуємо прямий потік із сторінки фільму
+    const streamUrl = await getStreamUrl(videoUrl);
+
+    // Вирізаємо потрібний відрізок у файл
+    const outputPath = `/tmp/clip_${Date.now()}.mp4`;
+    const result = await extractVideoClip(streamUrl, startTime, duration, outputPath);
 
     return res.json({ success: true, result });
   } catch (error) {
